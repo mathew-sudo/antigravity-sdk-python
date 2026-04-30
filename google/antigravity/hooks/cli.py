@@ -23,6 +23,7 @@ from typing import Any
 
 from google.antigravity import types
 from google.antigravity.hooks import hooks
+from google.antigravity.types import QuestionResponse
 
 
 class ToolConfirmationHook(hooks.PreToolCallDecideHook):
@@ -105,7 +106,7 @@ class AskQuestionHook(hooks.OnInteractionHook):
         ans = await asyncio.to_thread(input, "Response: ")
         ans = ans.strip()
         if not ans:
-          responses.append(hooks.QuestionResponse(skipped=True))
+          responses.append(QuestionResponse(skipped=True))
           continue
 
         # Try to match by option number
@@ -130,10 +131,10 @@ class AskQuestionHook(hooks.OnInteractionHook):
 
         if matched_id:
           responses.append(
-              hooks.QuestionResponse(selected_option_ids=[matched_id])
+              QuestionResponse(selected_option_ids=[matched_id])
           )
         else:
-          responses.append(hooks.QuestionResponse(freeform_response=ans))
+          responses.append(QuestionResponse(freeform_response=ans))
 
     except EOFError:
       return hooks.QuestionHookResult(responses=responses, cancelled=True)

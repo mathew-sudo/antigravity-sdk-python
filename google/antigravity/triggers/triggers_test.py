@@ -17,7 +17,6 @@
 import unittest
 from unittest import mock
 
-from google.antigravity import types
 from google.antigravity.connections import connection
 from google.antigravity.triggers import triggers
 

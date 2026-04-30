@@ -22,12 +22,10 @@ from __future__ import annotations
 import abc
 from typing import Any, Optional
 
-from google.antigravity import types
 from google.antigravity.types import AskQuestionInteractionSpec
 from google.antigravity.types import HookResult
 from google.antigravity.types import ModelCallInput
 from google.antigravity.types import QuestionHookResult
-from google.antigravity.types import QuestionResponse
 
 # --- Contexts ---
 

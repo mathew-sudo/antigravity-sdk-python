@@ -28,6 +28,7 @@ from google.antigravity.connections import local_connection
 from google.antigravity.hooks import hook_runner
 from google.antigravity.hooks import hooks as hooks_base
 from google.antigravity.tools import tool_runner
+from google.antigravity.types import QuestionResponse
 
 
 class FakeWebSocket:
@@ -302,7 +303,7 @@ class LocalConnectionTest(unittest.IsolatedAsyncioTestCase):
       async def run(self, context, data):  # pylint: disable=unused-argument
         return hooks_base.QuestionHookResult(
             responses=[
-                hooks_base.QuestionResponse(selected_option_ids=["1"]),
+                QuestionResponse(selected_option_ids=["1"]),
             ]
         )
 

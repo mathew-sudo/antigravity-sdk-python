@@ -17,7 +17,6 @@
 from typing import Any
 import unittest
 
-from google.antigravity import types
 from google.antigravity.hooks import hooks
 
 

@@ -21,7 +21,6 @@ and pushes messages back into the agent.
 
 from typing import Awaitable, Callable
 
-from google.antigravity import types
 from google.antigravity.connections import connection as connection_module
 
 

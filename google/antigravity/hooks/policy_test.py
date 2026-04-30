@@ -59,14 +59,18 @@ class BuilderTest(unittest.TestCase):
 
   def test_ask_user_creates_ask_user_policy(self):
     """ask_user() must produce a Policy with decision=ASK_USER and handler."""
-    handler = lambda tc: True
+    def handler(_):
+      return True
+
     p = policy.ask_user("run_command", handler=handler, name="confirm-cmd")
     self.assertEqual(p.decision, policy.Decision.ASK_USER)
     self.assertIs(p.ask_user, handler)
 
   def test_deny_with_predicate(self):
     """deny() with a when clause stores the predicate."""
-    pred = lambda args: "rm" in args.get("CommandLine", "")
+    def pred(args):
+      return "rm" in args.get("CommandLine", "")
+
     p = policy.deny("run_command", when=pred)
     self.assertIs(p.when, pred)
 

@@ -20,7 +20,6 @@ from typing import Any, Callable
 
 from google.antigravity import types
 from google.antigravity.connections import local_connection
-from google.antigravity.connections.local_connection import LocalConnectionStrategy
 from google.antigravity.conversation import conversation
 from google.antigravity.hooks import cli
 from google.antigravity.hooks import hook_runner
@@ -28,7 +27,6 @@ from google.antigravity.hooks import hooks
 from google.antigravity.hooks import policy
 from google.antigravity.mcp import bridge
 from google.antigravity.tools import tool_runner
-from google.antigravity.triggers import trigger_runner
 from google.antigravity.triggers import triggers as triggers_lib
 
 

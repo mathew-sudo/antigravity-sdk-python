@@ -35,18 +35,18 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    "absl-py",
     "google-genai>=1.0",
     "mcp>=1.0",
+    "prompt-toolkit>=3.0",
     "pydantic>=2.0",
+    "rich>=10.0",
     "websockets>=12.0",
     "protobuf>=4.25",
 ]
 
 [project.optional-dependencies]
-cli-utils = ["rich>=10.0", "prompt-toolkit>=3.0"]
-examples = ["absl-py"]
-dev = ["pytest>=7.0", "ruff>=0.4"]
-all = ["google-antigravity[cli-utils,examples,dev]"]
+dev = ["pytest>=7.0"]
 
 [project.urls]
 Homepage = "https://github.com/Google-Antigravity/antigravity-sdk-python"
@@ -62,3 +62,5 @@ include = ["google*"]
 # google/antigravity/bin/localharness before building each wheel.
 [tool.setuptools.package-data]
 "google.antigravity.bin" = ["*"]
+
+
