@@ -42,16 +42,21 @@ class Agent:
     Args:
         config: Declarative agent configuration.
     """
-    self._config = config
-    if config.response_schema:
-      self._config.capabilities.finish_tool_schema_json = config.response_schema
+    self._config = config.model_copy(deep=True)
+    if self._config.response_schema:
+      self._config.capabilities.finish_tool_schema_json = (
+          self._config.response_schema
+      )
     self._strategy = None
     self._conversation = None
-    self._conversation_cm = None
     self._tool_runner = None
     self._hook_runner = None
     self._trigger_runner = None
     self._mcp_bridge = None
+    # Use the original config (not self._config) for hooks and triggers:
+    # model_copy(deep=True) creates new objects, breaking reference equality
+    # for user-provided hooks/triggers. The list() snapshot prevents the
+    # caller from mutating our copy, while preserving object identity.
     self._pending_hooks = list(config.hooks)
     self._pending_triggers = list(config.triggers)
     self._exit_stack = contextlib.AsyncExitStack()
@@ -196,11 +201,7 @@ class Agent:
     Returns:
         The final response from the agent.
     """
-    if not self._conversation:
-      raise RuntimeError(
-          "Agent session not started. Use 'async with Agent(...)'."
-      )
-    return await self._conversation.chat(prompt)
+    return await self.conversation.chat(prompt)
 
   @property
   def is_started(self) -> bool:
