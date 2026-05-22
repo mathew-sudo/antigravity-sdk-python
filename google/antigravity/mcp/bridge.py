@@ -16,15 +16,19 @@
 
 # pylint: disable=g-importing-member
 
-from collections.abc import Mapping, Sequence
+import asyncio
+from collections.abc import Mapping, Sequence, Set
 import contextvars
 from datetime import timedelta
+import logging
 import re
 from typing import Any, Callable
+
 from mcp.client import stdio
 from mcp.client.session_group import ClientSessionGroup
 from mcp.client.session_group import SseServerParameters
 from mcp.client.session_group import StreamableHttpParameters
+
 from google.antigravity import types
 from google.antigravity.tools.tool_runner import ToolWithSchema
 
@@ -36,17 +40,22 @@ _current_server_cfg_var = contextvars.ContextVar[types.McpServerConfig | None](
 
 async def get_mcp_tools(
     session_group: ClientSessionGroup,
+    *,
+    allowed_names: Set[str] | None = None,
 ) -> list[ToolWithSchema]:
   """Fetches tools from session_group and returns them as ToolWithSchema.
 
   Args:
     session_group: The ClientSessionGroup to fetch tools from.
+    allowed_names: Optional set of allowed tool names to filter by.
 
   Returns:
     A list of ToolWithSchema objects.
   """
   tools = []
   for name, tool_info in session_group.tools.items():
+    if allowed_names is not None and name not in allowed_names:
+      continue
 
     def make_wrapper(tool_name: str, doc: str | None) -> Callable[..., Any]:
       async def wrapper(**kwargs: Any) -> Any:
@@ -64,6 +73,16 @@ async def get_mcp_tools(
   return tools
 
 
+MCP_TOOL_PREFIX = "mcp"
+
+
+def get_mcp_tool_prefix(server_name: str | None = None) -> str:
+  """Generates the standard namespace prefix for an MCP server's tools."""
+  if server_name:
+    return f"{MCP_TOOL_PREFIX}_{server_name}_"
+  return f"{MCP_TOOL_PREFIX}_"
+
+
 def _component_name_hook(name: str, server_info: Any) -> str:
   """Renames tools to prefix them with the server name.
 
@@ -78,16 +97,23 @@ def _component_name_hook(name: str, server_info: Any) -> str:
 
   if server_cfg:
     # Custom server name is pre-validated to match ^[a-zA-Z0-9_-]+$.
-    prefix = server_cfg.name.lower()
+    prefix_name = server_cfg.name
   else:
     # Fallback to server-reported name and sanitize it.
     raw_prefix = server_info.name if server_info else ""
     # Replace non-alphanumeric/hyphen/underscore with underscore.
-    prefix = re.sub(r"[^a-zA-Z0-9_-]+", "_", raw_prefix).strip("_").lower()
+    prefix_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", raw_prefix).strip("_")
 
-  if prefix:
-    return f"mcp_{prefix}_{name}"
-  return f"mcp_{name}"
+  prefix = get_mcp_tool_prefix(prefix_name)
+  return f"{prefix}{name}"
+
+
+def _is_tool_allowed(tool_name: str, server_cfg: types.McpServerConfig) -> bool:
+  if server_cfg.enabled_tools is not None:
+    return tool_name in server_cfg.enabled_tools
+  if server_cfg.disabled_tools is not None:
+    return tool_name not in server_cfg.disabled_tools
+  return True
 
 
 class McpBridge:
@@ -97,6 +123,8 @@ class McpBridge:
     """Initializes the McpBridge instance."""
     self._session_group: ClientSessionGroup | None = None
     self._tools: list[ToolWithSchema] = []
+    self._allowed_tool_names: set[str] = set()
+    self._lock = asyncio.Lock()
 
   @property
   def tools(self) -> list[ToolWithSchema]:
@@ -204,22 +232,69 @@ class McpBridge:
       server_cfg: types.McpServerConfig | None = None,
   ) -> None:
     """Establishes connection using ClientSessionGroup and registers tools."""
-    if not self._session_group:
-      self._session_group = ClientSessionGroup(
-          component_name_hook=_component_name_hook
+    async with self._lock:
+      if not self._session_group:
+        self._session_group = ClientSessionGroup(
+            component_name_hook=_component_name_hook
+        )
+        # Direct __aenter__ call because McpBridge manages the session
+        # lifecycle itself (connect/stop) rather than being used as an
+        # async context manager. __aexit__ is called in stop().
+        await self._session_group.__aenter__()
+
+      before_tools = set(self._session_group.tools.keys())
+
+      token = _current_server_cfg_var.set(server_cfg)
+      try:
+        await self._session_group.connect_to_server(params)
+      finally:
+        _current_server_cfg_var.reset(token)
+
+      after_tools = set(self._session_group.tools.keys())
+      new_tool_names = after_tools - before_tools
+
+      if server_cfg is None:
+        self._allowed_tool_names.update(new_tool_names)
+        self._tools = await get_mcp_tools(
+            self._session_group, allowed_names=self._allowed_tool_names
+        )
+        return
+
+      prefix = get_mcp_tool_prefix(server_cfg.name)
+
+      seen_original_names = {
+          p[len(prefix) :] if p.startswith(prefix) else p
+          for p in new_tool_names
+      }
+      if server_cfg.enabled_tools:
+        invalid = set(server_cfg.enabled_tools) - seen_original_names
+        if invalid:
+          raise ValueError(
+              "Configured enabled_tools do not exist on server"
+              f" '{server_cfg.name}': {invalid}"
+          )
+      if server_cfg.disabled_tools:
+        invalid = set(server_cfg.disabled_tools) - seen_original_names
+        if invalid:
+          raise ValueError(
+              "Configured disabled_tools do not exist on server"
+              f" '{server_cfg.name}': {invalid}"
+          )
+
+      for prefixed_name in new_tool_names:
+        if prefixed_name.startswith(prefix):
+          original_name = prefixed_name[len(prefix) :]
+        else:
+          original_name = prefixed_name
+
+        if _is_tool_allowed(original_name, server_cfg):
+          self._allowed_tool_names.add(prefixed_name)
+        else:
+          logging.info("MCP tool %s is disabled by config", prefixed_name)
+
+      self._tools = await get_mcp_tools(
+          self._session_group, allowed_names=self._allowed_tool_names
       )
-      # Direct __aenter__ call because McpBridge manages the session
-      # lifecycle itself (connect/stop) rather than being used as an
-      # async context manager. __aexit__ is called in stop().
-      await self._session_group.__aenter__()
-
-    token = _current_server_cfg_var.set(server_cfg)
-    try:
-      await self._session_group.connect_to_server(params)
-    finally:
-      _current_server_cfg_var.reset(token)
-
-    self._tools = await get_mcp_tools(self._session_group)
 
   async def stop(self):
     """Cleans up all active MCP sessions and releases resources."""

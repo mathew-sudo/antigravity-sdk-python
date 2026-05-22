@@ -219,6 +219,297 @@ class TestMcpBridge(unittest.TestCase):
       asyncio.run(run_test())
 
 
+class TestMcpBridgeFiltering(unittest.TestCase):
+
+  def _setup_mock_session_group(self, mock_group_cls, tools_to_add):
+    """Helper to set up ClientSessionGroup mock with tools added during connect."""
+    mock_session_group = mock.MagicMock(spec=ClientSessionGroup)
+    mock_group_cls.return_value = mock_session_group
+    mock_session_group.__aenter__ = mock.AsyncMock(
+        return_value=mock_session_group
+    )
+
+    tools_dict = {}
+    mock_session_group.tools = tools_dict
+
+    async def mock_connect(params):
+      tools_dict.update(tools_to_add)
+
+    mock_session_group.connect_to_server = mock.AsyncMock(
+        side_effect=mock_connect
+    )
+    return mock_session_group
+
+  @mock.patch(
+      "google.antigravity.mcp.bridge.ClientSessionGroup"
+  )
+  def test_connect_without_filtering(self, mock_group_cls):
+    """Verifies that all tools are kept when no filtering is configured."""
+    bridge = McpBridge()
+    self._setup_mock_session_group(
+        mock_group_cls,
+        {
+            "mcp_my_server_tool1": types.Tool(
+                name="tool1",
+                description="tool1 desc",
+                inputSchema={"type": "object"},
+            ),
+            "mcp_my_server_tool2": types.Tool(
+                name="tool2",
+                description="tool2 desc",
+                inputSchema={"type": "object"},
+            ),
+        },
+    )
+
+    server_cfg = sdk_types.McpStdioServer(name="my_server", command="cmd")
+
+    async def run_test():
+      await bridge.connect(server_cfg)
+      self.assertEqual(len(bridge.tools), 2)
+      tool_names = {t.__name__ for t in bridge.tools}
+      self.assertEqual(
+          tool_names, {"mcp_my_server_tool1", "mcp_my_server_tool2"}
+      )
+
+    asyncio.run(run_test())
+
+  @mock.patch(
+      "google.antigravity.mcp.bridge.ClientSessionGroup"
+  )
+  def test_connect_with_disabled_tools(self, mock_group_cls):
+    """Verifies that disabled tools are filtered out."""
+    bridge = McpBridge()
+    self._setup_mock_session_group(
+        mock_group_cls,
+        {
+            "mcp_my_server_tool1": types.Tool(
+                name="tool1",
+                description="tool1 desc",
+                inputSchema={"type": "object"},
+            ),
+            "mcp_my_server_tool2": types.Tool(
+                name="tool2",
+                description="tool2 desc",
+                inputSchema={"type": "object"},
+            ),
+        },
+    )
+
+    server_cfg = sdk_types.McpStdioServer(
+        name="my_server", command="cmd", disabled_tools=["tool2"]
+    )
+
+    async def run_test():
+      await bridge.connect(server_cfg)
+      self.assertEqual(len(bridge.tools), 1)
+      self.assertEqual(bridge.tools[0].__name__, "mcp_my_server_tool1")
+
+    asyncio.run(run_test())
+
+  @mock.patch(
+      "google.antigravity.mcp.bridge.ClientSessionGroup"
+  )
+  def test_connect_with_enabled_tools(self, mock_group_cls):
+    """Verifies that only enabled tools are kept."""
+    bridge = McpBridge()
+    self._setup_mock_session_group(
+        mock_group_cls,
+        {
+            "mcp_my_server_tool1": types.Tool(
+                name="tool1",
+                description="tool1 desc",
+                inputSchema={"type": "object"},
+            ),
+            "mcp_my_server_tool2": types.Tool(
+                name="tool2",
+                description="tool2 desc",
+                inputSchema={"type": "object"},
+            ),
+        },
+    )
+
+    server_cfg = sdk_types.McpStdioServer(
+        name="my_server", command="cmd", enabled_tools=["tool1"]
+    )
+
+    async def run_test():
+      await bridge.connect(server_cfg)
+      self.assertEqual(len(bridge.tools), 1)
+      self.assertEqual(bridge.tools[0].__name__, "mcp_my_server_tool1")
+
+    asyncio.run(run_test())
+
+  @mock.patch(
+      "google.antigravity.mcp.bridge.ClientSessionGroup"
+  )
+  def test_connect_with_invalid_enabled_tools_raises(self, mock_group_cls):
+    """Verifies that ValueError is raised if configured enabled_tools do not exist."""
+    bridge = McpBridge()
+    self._setup_mock_session_group(
+        mock_group_cls,
+        {
+            "mcp_my_server_tool1": types.Tool(
+                name="tool1",
+                description="tool1 desc",
+                inputSchema={"type": "object"},
+            ),
+        },
+    )
+
+    server_cfg = sdk_types.McpStdioServer(
+        name="my_server", command="cmd", enabled_tools=["non_existent_tool"]
+    )
+
+    async def run_test():
+      with self.assertRaises(ValueError) as ctx:
+        await bridge.connect(server_cfg)
+      self.assertIn("Configured enabled_tools do not exist", str(ctx.exception))
+
+    asyncio.run(run_test())
+
+  @mock.patch(
+      "google.antigravity.mcp.bridge.ClientSessionGroup"
+  )
+  def test_connect_with_invalid_disabled_tools_raises(self, mock_group_cls):
+    """Verifies that ValueError is raised if configured disabled_tools do not exist."""
+    bridge = McpBridge()
+    self._setup_mock_session_group(
+        mock_group_cls,
+        {
+            "mcp_my_server_tool1": types.Tool(
+                name="tool1",
+                description="tool1 desc",
+                inputSchema={"type": "object"},
+            ),
+        },
+    )
+
+    server_cfg = sdk_types.McpStdioServer(
+        name="my_server", command="cmd", disabled_tools=["non_existent_tool"]
+    )
+
+    async def run_test():
+      with self.assertRaises(ValueError) as ctx:
+        await bridge.connect(server_cfg)
+      self.assertIn(
+          "Configured disabled_tools do not exist", str(ctx.exception)
+      )
+
+    asyncio.run(run_test())
+
+  @mock.patch(
+      "google.antigravity.mcp.bridge.ClientSessionGroup"
+  )
+  def test_connect_multiple_servers_filtering(self, mock_group_cls):
+    """Verifies filtering works independently for multiple servers."""
+    bridge = McpBridge()
+
+    # For multi-server, we need a custom side effect to simulate successive connects
+    mock_session_group = mock.MagicMock(spec=ClientSessionGroup)
+    mock_group_cls.return_value = mock_session_group
+    mock_session_group.__aenter__ = mock.AsyncMock(
+        return_value=mock_session_group
+    )
+
+    tools_dict = {}
+    mock_session_group.tools = tools_dict
+
+    # First connection side effect
+    async def mock_connect1(params):
+      tools_dict.update({
+          "mcp_server1_tool1": types.Tool(
+              name="tool1",
+              description="tool1 desc",
+              inputSchema={"type": "object"},
+          ),
+          "mcp_server1_tool2": types.Tool(
+              name="tool2",
+              description="tool2 desc",
+              inputSchema={"type": "object"},
+          ),
+      })
+
+    mock_session_group.connect_to_server = mock.AsyncMock(
+        side_effect=mock_connect1
+    )
+
+    server1_cfg = sdk_types.McpStdioServer(
+        name="server1", command="cmd1", disabled_tools=["tool2"]
+    )
+
+    # Second connection side effect (appends to existing tools)
+    async def mock_connect2(params):
+      tools_dict.update({
+          "mcp_server2_tool1": types.Tool(
+              name="tool1",
+              description="tool1 desc",
+              inputSchema={"type": "object"},
+          ),
+          "mcp_server2_tool2": types.Tool(
+              name="tool2",
+              description="tool2 desc",
+              inputSchema={"type": "object"},
+          ),
+      })
+
+    async def run_test():
+      # Connect first server
+      await bridge.connect(server1_cfg)
+      self.assertEqual(len(bridge.tools), 1)
+      self.assertEqual(bridge.tools[0].__name__, "mcp_server1_tool1")
+
+      # Re-mock side effect for second connection
+      mock_session_group.connect_to_server.side_effect = mock_connect2
+      server2_cfg = sdk_types.McpStdioServer(
+          name="server2", command="cmd2", enabled_tools=["tool2"]
+      )
+
+      await bridge.connect(server2_cfg)
+
+      # Total tools should be server1_tool1 (allowed) + server2_tool2 (allowed)
+      self.assertEqual(len(bridge.tools), 2)
+      tool_names = {t.__name__ for t in bridge.tools}
+      self.assertEqual(tool_names, {"mcp_server1_tool1", "mcp_server2_tool2"})
+
+    asyncio.run(run_test())
+
+  @mock.patch(
+      "google.antigravity.mcp.bridge.ClientSessionGroup"
+  )
+  def test_connect_case_preserving_filtering(self, mock_group_cls):
+    """Verifies that tool matching and prefix stripping preserve case."""
+    bridge = McpBridge()
+    self._setup_mock_session_group(
+        mock_group_cls,
+        {
+            "mcp_My-Server_tool1": types.Tool(
+                name="tool1",
+                description="tool1 desc",
+                inputSchema={"type": "object"},
+            ),
+            "mcp_My-Server_tool2": types.Tool(
+                name="tool2",
+                description="tool2 desc",
+                inputSchema={"type": "object"},
+            ),
+        },
+    )
+
+    # Server name has uppercase letters
+    server_cfg = sdk_types.McpStdioServer(
+        name="My-Server", command="cmd", disabled_tools=["tool2"]
+    )
+
+    async def run_test():
+      await bridge.connect(server_cfg)
+      self.assertEqual(len(bridge.tools), 1)
+      # Prefixed name must preserve case exactly
+      self.assertEqual(bridge.tools[0].__name__, "mcp_My-Server_tool1")
+
+    asyncio.run(run_test())
+
+
 class TestMcpToolPrefixing(parameterized.TestCase):
   """Test suite for namespaced tool prefixing behaviors."""
 
@@ -228,14 +519,14 @@ class TestMcpToolPrefixing(parameterized.TestCase):
           config_name="Math-Server",
           server_info_name=None,
           tool_name="add",
-          expected="mcp_math-server_add",
+          expected="mcp_Math-Server_add",
       ),
       dict(
           testcase_name="with_server_info_fallback",
           config_name=None,
           server_info_name="Math Server (v3!)",
           tool_name="add",
-          expected="mcp_math_server_v3_add",
+          expected="mcp_Math_Server_v3_add",
       ),
       dict(
           testcase_name="with_no_name_anywhere",

@@ -1355,6 +1355,110 @@ class McpServerConfigTest(parameterized.TestCase):
     with self.assertRaises(pydantic.ValidationError):
       server_cls(**init_kwargs)  # type: ignore
 
+  @parameterized.named_parameters(
+      (
+          "stdio_enabled",
+          types.McpStdioServer,
+          {
+              "name": "stdio_server",
+              "command": "node",
+              "enabled_tools": ["tool1"],
+          },
+          "enabled_tools",
+          ["tool1"],
+      ),
+      (
+          "stdio_disabled",
+          types.McpStdioServer,
+          {
+              "name": "stdio_server",
+              "command": "node",
+              "disabled_tools": ["tool2"],
+          },
+          "disabled_tools",
+          ["tool2"],
+      ),
+      (
+          "sse_enabled",
+          types.McpSseServer,
+          {
+              "name": "sse_server",
+              "url": "http://localhost/sse",
+              "enabled_tools": ["tool1"],
+          },
+          "enabled_tools",
+          ["tool1"],
+      ),
+      (
+          "sse_disabled",
+          types.McpSseServer,
+          {
+              "name": "sse_server",
+              "url": "http://localhost/sse",
+              "disabled_tools": ["tool2"],
+          },
+          "disabled_tools",
+          ["tool2"],
+      ),
+  )
+  def test_server_construction_with_filtering(
+      self, server_cls, init_kwargs, expected_attr, expected_val
+  ):
+    """Verifies that MCP server configs construct with enabled or disabled tools."""
+    server = server_cls(**init_kwargs)
+    self.assertEqual(getattr(server, expected_attr), expected_val)
+
+  @parameterized.named_parameters(
+      (
+          "stdio_different_tools",
+          types.McpStdioServer,
+          {
+              "name": "stdio_server",
+              "command": "node",
+              "enabled_tools": ["tool1"],
+              "disabled_tools": ["tool2"],
+          },
+      ),
+      (
+          "stdio_same_tool",
+          types.McpStdioServer,
+          {
+              "name": "stdio_server",
+              "command": "node",
+              "enabled_tools": ["tool1"],
+              "disabled_tools": ["tool1"],
+          },
+      ),
+      (
+          "sse_different_tools",
+          types.McpSseServer,
+          {
+              "name": "sse_server",
+              "url": "http://localhost/sse",
+              "enabled_tools": ["tool1"],
+              "disabled_tools": ["tool2"],
+          },
+      ),
+      (
+          "sse_same_tool",
+          types.McpSseServer,
+          {
+              "name": "sse_server",
+              "url": "http://localhost/sse",
+              "enabled_tools": ["tool1"],
+              "disabled_tools": ["tool1"],
+          },
+      ),
+  )
+  def test_server_exclusive_filtering_raises(self, server_cls, init_kwargs):
+    """Verifies that providing both enabled and disabled tools raises ValidationError."""
+    with self.assertRaises(pydantic.ValidationError) as ctx:
+      server_cls(**init_kwargs)
+    self.assertIn(
+        "enabled_tools and disabled_tools should be mutually exclusive.",
+        str(ctx.exception),
+    )
+
   def test_union_deserialization(self):
     """Verifies that TypeAdapter parses McpServerConfig union variants with name correctly.
 
